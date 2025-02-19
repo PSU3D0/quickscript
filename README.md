@@ -152,6 +152,95 @@
 
 ---
 
+
+## DataFrame Integration with Pandas, Polars, and PyArrow 🚀
+
+**quickscript** seamlessly integrates with popular data processing libraries, ensuring that your data retrieval functions are type-safe and production-ready. With the `@queryable` decorator, you can enforce that your functions return the correct frame-like object—whether it’s a Pandas DataFrame, a Polars DataFrame, or a PyArrow Table.
+
+> **Tip:** To use these integrations, make sure to install the necessary libraries:
+>
+> ```bash
+> pip install pandas polars pyarrow
+> ```
+
+### Example: Pandas Integration
+
+```python
+from pydantic import BaseModel
+from quickscript import queryable
+
+class PandasQueryArgs(BaseModel):
+    filter_value: int
+
+@queryable(frame_type="pandas")
+async def fetch_pandas_data(args: PandasQueryArgs) -> "pandas.DataFrame":
+    import pandas as pd
+    # Simulate fetching data and applying a filter using Pandas
+    data = {
+        "id": [1, 2, 3, 4],
+        "value": [10, 20, 30, 40]
+    }
+    df = pd.DataFrame(data)
+    return df[df["value"] > args.filter_value]
+
+# Usage:
+# import asyncio
+# asyncio.run(fetch_pandas_data(PandasQueryArgs(filter_value=25)))
+```
+
+### Example: Polars Integration
+
+```python
+from pydantic import BaseModel
+from quickscript import queryable
+
+class PolarsQueryArgs(BaseModel):
+    min_value: int
+
+@queryable(frame_type="polars")
+async def fetch_polars_data(args: PolarsQueryArgs) -> "polars.DataFrame":
+    import polars as pl
+    # Simulate fetching data and filtering using Polars
+    data = {
+        "id": [1, 2, 3, 4],
+        "value": [15, 25, 35, 45]
+    }
+    df = pl.DataFrame(data)
+    return df.filter(pl.col("value") > args.min_value)
+
+# Usage:
+# import asyncio
+# asyncio.run(fetch_polars_data(PolarsQueryArgs(min_value=30)))
+```
+
+### Example: PyArrow Integration
+
+```python
+from pydantic import BaseModel
+from quickscript import queryable
+
+class ArrowQueryArgs(BaseModel):
+    key: str
+
+@queryable(frame_type="arrow")
+async def fetch_arrow_data(args: ArrowQueryArgs) -> "pyarrow.Table":
+    import pyarrow as pa
+    # Simulate creating a table with PyArrow
+    data = {
+        "name": ["Alice", "Bob", "Charlie"],
+        "key": [args.key, args.key * 2, args.key * 3]
+    }
+    table = pa.table(data)
+    return table
+
+# Usage:
+# import asyncio
+# asyncio.run(fetch_arrow_data(ArrowQueryArgs(key="A")))
+```
+
+---
+
+
 ## Why quickscript? 🤔
 
 - **Efficiency:**

@@ -2,3 +2,7 @@
 __pycache__/
 .venv/
 .env
+.aider*
+
+.ruff_cache/
+.coverage
