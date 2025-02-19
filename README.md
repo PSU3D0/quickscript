@@ -12,6 +12,14 @@
 
 **quickscript** is an opinionated microframework designed for **single-file agent/worker scripts**. It provides robust guardrails for the trickiest parts of scripting—such as querying external data, mutating state, and handling side effects—while remaining as lightweight and flexible as possible. With a **pydantic-first** approach, your scripts become self-documenting, type-safe, and even serializable—unlocking powerful possibilities like automatic spec generation and easy frontend conversion.
 
+### Who is this for?
+
+1. You're using pydantic as either a first or second-order dependency in your project
+2. You use LLM's or agent systems to heavily automate your coding workflow
+3. You want to ensure your scripts have strong type safety, particularly around consequential actions like data mutation, side effects, and external interactions
+4. You want to minimize abstractions and dependency overhead.
+
+
 ---
 
 ## Features ✨
@@ -23,14 +31,27 @@
   - **Queryables:** Fetch and validate data (JSON, DB records, file inputs) using Pydantic models.
   - **Mutatables:** Execute actions with side effects like POST requests, notifications, or updating external systems.
 
+- **Dataframe Integration:**
+  - First-class support for Pandas, Polars, and PyArrow DataFrames.
+  - Automatically validate the return type of your functions against the specified dataframe type.
+
 - **CLI Integration:**
   Automatically build command-line interfaces from your Pydantic models.
 
 - **LLM-Friendly:**
-  Its brevity and rich docstrings make it ideal as context for large language models (LLMs), ensuring consistent patterns in generated code.
+  Its brevity and rich docstrings make it ideal as context for large language models (LLMs), ensuring consistent patterns in generated code. Add this script as read-only context to **aider** or **cursor** to guide the LLM on usage
 
 - **Lightweight & Extensible:**
   No bloat—just the essentials, with optional features you can integrate as your project grows.
+
+
+### Implications
+
+- All data fetching, mutation, and side effects have explicit interfaces with optional runtime typechecking.
+- Your script arguments could be **exposed as a tool to LLMs**
+- Decorator usage can be "discovered" to automatically generate complete documentation, including types.
+- Scripts can be organized into **collections** and exposed to frontend frameworks in a myriad of ways.
+
 
 ---
 
@@ -243,6 +264,10 @@ async def fetch_arrow_data(args: ArrowQueryArgs) -> "pyarrow.Table":
 
 ## Why quickscript? 🤔
 
+Large language models are awesome at drafting code quickly, but often have substantial variance in the quality and style of the code they generate, particularly as it pertains to **fetching/mutating data** and handling **side effects**.
+
+For engineers who are using LLM's or agent systems to produce scripts in large volumes, quickscript provides a minimal (1 file, 1 dependency) framework to **guide** language models towards producing more reliable, robust, and performant scripts.
+
 - **Efficiency:**
   A minimal framework means less overhead and faster prototyping.
 
@@ -250,7 +275,7 @@ async def fetch_arrow_data(args: ArrowQueryArgs) -> "pyarrow.Table":
   Built-in type checking, dependency validation, and environment variable checks catch errors early.
 
 - **Versatility:**
-  Perfect for everything from quick utility scripts to more complex agent workflows.
+  Simplicity and flexibility make quickscript perfect for everything from quick utility scripts to chaining together more complex agent-based workflows.
 
 - **Developer-Friendly:**
   Rich documentation and clear patterns let you focus on your business logic.
