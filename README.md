@@ -6,6 +6,16 @@
   <!-- <img alt="quickscript banner" src="https://via.placeholder.com/600x150?text=quickscript" /> -->
 </div>
 
+<!-- Additional Badges -->
+<div align="center">
+  [![Build Status](https://github.com/PSU3D0/quickscript/workflows/CI/badge.svg)](https://github.com/PSU3D0/quickscript/actions)
+  [![PyPI version](https://img.shields.io/pypi/v/quickscript)](https://pypi.org/project/quickscript/)
+  [![Coverage Status](https://coveralls.io/repos/github/PSU3D0/quickscript/badge.svg?branch=master)](https://coveralls.io/github/PSU3D0/quickscript?branch=master)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  [![Downloads](https://pepy.tech/badge/quickscript)](https://pepy.tech/project/quickscript)
+  [![Contributors](https://img.shields.io/github/contributors/PSU3D0/quickscript)](https://github.com/PSU3D0/quickscript/graphs/contributors)
+</div>
+
 ---
 
 ## Overview 🌟
@@ -20,8 +30,8 @@
   Everything you need is bundled in one compact file, making it perfect for quick experiments or production-ready utilities.
 
 - **Guarded Queryables & Mutatables:**
-  - **Queryables:** For fetching and validating data (JSON, DB records, file inputs) using Pydantic models.
-  - **Mutatables:** For actions with side effects like POST requests, notifications, or updating external systems.
+  - **Queryables:** Fetch and validate data (JSON, DB records, file inputs) using Pydantic models.
+  - **Mutatables:** Execute actions with side effects like POST requests, notifications, or updating external systems.
 
 - **CLI Integration:**
   Automatically build command-line interfaces from your Pydantic models.
@@ -30,7 +40,7 @@
   Its brevity and rich docstrings make it ideal as context for large language models (LLMs), ensuring consistent patterns in generated code.
 
 - **Lightweight & Extensible:**
-  No bloat—just the essentials, with optional features that you can integrate as your project grows.
+  No bloat—just the essentials, with optional features you can integrate as your project grows.
 
 ---
 
@@ -53,25 +63,12 @@
 
 ---
 
-## Upcoming Features 🔮
-
-- **Auto-Bundling with Docker:**
-  Support for top-of-file pragmas to automatically bundle your script with Docker for seamless serverless deployment.
-
-- **DAG Tracking:**
-  Optional dependency tracking for queryables, mutatables, and the introduction of a `@step` decorator to define execution flows.
-
-- **Frontend Conversion:**
-  Easily convert your single-file script into a lightweight frontend, opening the door to interactive applications.
-
----
-
 ## Getting Started 📦
 
 1. **Clone the Repository:**
 
    ```bash
-   git clone https://github.com/yourusername/quickscript.git
+   git clone https://github.com/PSU3D0/quickscript.git
    cd quickscript
    ```
 
@@ -85,11 +82,13 @@
 
 3. **Write Your Script:**
 
-   Here’s a minimal example to get you started:
+   Here are several salient code examples demonstrating different capabilities of quickscript:
+
+   ### Example 1: Basic Script Usage
 
    ```python
    from pydantic import BaseModel, Field
-   from quickscript import script, queryable, mutatable
+   from quickscript import script
 
    class CLIArgs(BaseModel):
        """
@@ -105,6 +104,54 @@
 
    if __name__ == "__main__":
        main()
+   ```
+
+   ### Example 2: Defining a Queryable Function
+
+   ```python
+   from pydantic import BaseModel
+   from quickscript import queryable
+
+   class DataQueryArgs(BaseModel):
+       query: str
+
+   @queryable(frame_type="pandas")
+   async def fetch_data(args: DataQueryArgs) -> "pandas.DataFrame":
+       import pandas as pd
+       # Simulate fetching data based on a query
+       data = {"id": [1, 2, 3], "value": ["A", "B", "C"]}
+       df = pd.DataFrame(data)
+       return df
+
+   # To use:
+   # import asyncio
+   # asyncio.run(fetch_data(DataQueryArgs(query="select * from table")))
+   ```
+
+   ### Example 3: Creating a Mutatable Function
+
+   ```python
+   from pydantic import BaseModel
+   from quickscript import mutatable
+
+   class UpdateArgs(BaseModel):
+       record_id: int
+       status: str
+
+   class UpdateResult(BaseModel):
+       success: bool
+       message: str
+
+   @mutatable()
+   async def update_record(args: UpdateArgs) -> UpdateResult:
+       # Simulate an update operation (e.g., a POST request)
+       return UpdateResult(success=True, message=f"Record {args.record_id} updated to {args.status}")
+
+   # To use:
+   # import asyncio
+   async def my_function_that_does_anything():
+      result = await update_record(UpdateArgs(record_id=42, status="active"))
+      print(result)
    ```
 
 4. **Run Your Script:**
@@ -143,7 +190,7 @@ Contributions, suggestions, and bug reports are very welcome! Please open an iss
 
 ## License 📄
 
-This project is licensed under the [MIT License](LICENSE) © 2025 Your Name
+This project is licensed under the [MIT License](LICENSE) © 2025 Frankie Colson
 
 ---
 
