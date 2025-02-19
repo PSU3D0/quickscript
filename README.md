@@ -4,6 +4,10 @@
     <strong>A one-file microframework for robust, single-file agent and utility scripts</strong> ⚡️🚀
   </p>
   <!-- <img alt="quickscript banner" src="https://via.placeholder.com/600x150?text=quickscript" /> -->
+  [![pypi](https://img.shields.io/pypi/v/quickscript.svg)](https://pypi.org/project/quickscript/)
+  [![python](https://img.shields.io/pypi/pyversions/quickscript.svg)](https://pypi.org/project/quickscript/)
+  [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+
 </div>
 
 ---
