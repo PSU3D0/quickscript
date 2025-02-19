@@ -1,0 +1,20 @@
+[project]
+name = "quickscript"
+version = "0.1.0"
+description = "A concise micro-framework for writing llm-agent scripts."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pandas>=2.2.3",
+    "polars>=1.22.0",
+    "pyarrow>=19.0.1",
+    "pytest-cov>=6.0.0",
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.3",
+    "pre-commit>=4.1.0",
+]
