@@ -6,16 +6,6 @@
   <!-- <img alt="quickscript banner" src="https://via.placeholder.com/600x150?text=quickscript" /> -->
 </div>
 
-<!-- Additional Badges -->
-<div align="center">
-  [![Build Status](https://github.com/PSU3D0/quickscript/workflows/CI/badge.svg)](https://github.com/PSU3D0/quickscript/actions)
-  [![PyPI version](https://img.shields.io/pypi/v/quickscript)](https://pypi.org/project/quickscript/)
-  [![Coverage Status](https://coveralls.io/repos/github/PSU3D0/quickscript/badge.svg?branch=master)](https://coveralls.io/github/PSU3D0/quickscript?branch=master)
-  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-  [![Downloads](https://pepy.tech/badge/quickscript)](https://pepy.tech/project/quickscript)
-  [![Contributors](https://img.shields.io/github/contributors/PSU3D0/quickscript)](https://github.com/PSU3D0/quickscript/graphs/contributors)
-</div>
-
 ---
 
 ## Overview 🌟
