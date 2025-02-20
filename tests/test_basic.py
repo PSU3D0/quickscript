@@ -1,10 +1,10 @@
 import sys
 import os
-import sys
 import logging
 import pytest
 from pydantic import BaseModel, Field
 import pandas as pd
+from unittest import mock
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -43,6 +43,27 @@ async def test_queryable_valid_model_return():
     result = await dummy_query(args)
     assert isinstance(result, DummyResult)
     assert result.result == 10
+
+
+@pytest.mark.asyncio
+async def test_queryable_with_env_var_requirements():
+    @queryable(env_vars={"TEST_ENV_VAR": int})
+    async def query_with_env_var(args: DummyArgs) -> DummyResult:
+        return DummyResult(result=args.num * 2)
+
+    with pytest.raises(EnvironmentError) as excinfo:
+        await query_with_env_var(DummyArgs(num=1))
+    assert "TEST_ENV_VAR" in str(excinfo.value)
+
+    # Now test invalid type as the env variable
+    @queryable(env_vars={"TEST_ENV_VAR": int})
+    async def query_with_invalid_type(args: DummyArgs) -> DummyResult:
+        return DummyResult(result=args.num * 2)
+
+    with mock.patch.dict(os.environ, {"TEST_ENV_VAR": "not_an_int"}):
+        with pytest.raises(ValueError) as excinfo:
+            await query_with_invalid_type(DummyArgs(num=1))
+        assert "TEST_ENV_VAR" in str(excinfo.value)
 
 
 # -----------------------------------------------------------------------------
@@ -105,6 +126,19 @@ async def test_queryable_valid_frame_return():
     frame_obj = result[0] if isinstance(result, tuple) else result
     assert isinstance(frame_obj, pd.DataFrame)
     assert frame_obj["num"].tolist() == [3, 4]
+
+
+@pytest.mark.asyncio
+async def test_queryable_invalid_frame_type():
+    with pytest.raises(ValueError) as excinfo:
+
+        @queryable(frame_type="invalid")
+        async def query_frame(args: DummyArgs) -> pd.DataFrame:
+            return [1, 2, 3]
+
+        await query_frame(DummyArgs(num=1))
+
+    assert "Unknown frame_type 'invalid'" in str(excinfo.value)
 
 
 # -----------------------------------------------------------------------------
@@ -216,6 +250,54 @@ def test_script_decorator_cli_args(monkeypatch, capsys):
 
     # Call the decorated function.
     main()
+    # Capture the printed output.
+    captured = capsys.readouterr().out
+    assert "Script executed." in captured
+    assert called is True
+
+
+@pytest.mark.asyncio
+async def test_script_decorator_cli_args_async(monkeypatch, capsys):
+    # Define a CLI argument model.
+    class CLIArgs(BaseModel):
+        input_file: str = Field(
+            "default.txt",
+            description="Path to the input file",
+            # Simulate argparse settings.
+            **{"argparse": {"cli_required": True, "metavar": "FILE"}},
+        )
+        mode: str = Field(
+            ...,
+            description="Operation mode",
+            **{"argparse": {"choices": ["fast", "slow"], "metavar": "MODE"}},
+        )
+
+    # Prepare fake command-line arguments.
+    test_args = ["prog", "--input_file", "test.txt", "--mode", "fast"]
+    monkeypatch.setattr(sys, "argv", test_args)
+
+    # Create a flag to capture that the function was called.
+    called = False
+
+    @script(arg_parser_model=CLIArgs)
+    async def main(cli_args: CLIArgs, logger: logging.Logger):
+        nonlocal called
+        called = True
+        # Inside the script, we can also retrieve the context logger/args.
+        ctx_logger = get_script_logger()
+        ctx_args = get_script_args()
+        # Check that the CLI args match our test input.
+        assert cli_args.input_file == "test.txt"
+        assert cli_args.mode == "fast"
+        # Logger should be a Logger instance.
+        assert isinstance(logger, logging.Logger)
+        # The context-provided logger should be the same as the passed logger.
+        assert logger is ctx_logger
+        # Optionally, write something to stdout.
+        print("Script executed.")
+
+    # Call the decorated function.
+    await main()
     # Capture the printed output.
     captured = capsys.readouterr().out
     assert "Script executed." in captured
