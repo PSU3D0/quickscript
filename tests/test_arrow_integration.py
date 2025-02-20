@@ -14,7 +14,7 @@ class ArrowQueryArgs(BaseModel):
 
 @pytest.mark.asyncio
 async def test_arrow_basic_table():
-    @queryable(frame_type="arrow")
+    @queryable
     async def query_arrow(args: ArrowQueryArgs) -> pa.Table:
         data = {"name": ["Alice", "Bob", "Charlie"], "key": [args.key] * 3}
         return pa.Table.from_pydict(data)
@@ -27,7 +27,7 @@ async def test_arrow_basic_table():
 
 @pytest.mark.asyncio
 async def test_arrow_with_metadata():
-    @queryable(frame_type="arrow")
+    @queryable
     async def query_arrow_meta(args: ArrowQueryArgs) -> pa.Table:
         data = {"name": ["Alice", "Bob"], "key": [args.key, args.key * 2]}
         table = pa.Table.from_pydict(data)
@@ -42,7 +42,7 @@ async def test_arrow_with_metadata():
 
 @pytest.mark.asyncio
 async def test_arrow_schema():
-    @queryable(frame_type="arrow")
+    @queryable
     async def query_schema(args: ArrowQueryArgs) -> pa.Table:
         schema = pa.schema([("name", pa.string()), ("key", pa.string())])
         data = [pa.array(["Alice", "Bob"]), pa.array([args.key, args.key])]
@@ -52,3 +52,16 @@ async def test_arrow_schema():
     assert isinstance(result, pa.Table)
     assert result.schema.names == ["name", "key"]
     assert result.schema.types == [pa.string(), pa.string()]
+
+
+@pytest.mark.asyncio
+async def test_arrow__string_annotation():
+    @queryable
+    async def query_arrow(args: ArrowQueryArgs) -> "pa.Table":
+        data = {"name": ["Alice", "Bob", "Charlie"], "key": [args.key] * 3}
+        return pa.Table.from_pydict(data)
+
+    result = await query_arrow(ArrowQueryArgs(key="test"))
+    assert isinstance(result, pa.Table)
+    assert result.num_rows == 3
+    assert result.column_names == ["name", "key"]

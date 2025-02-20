@@ -35,7 +35,7 @@ class OutputModel(BaseModel):
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_queryable_valid_model_return():
-    @queryable(returns="model")
+    @queryable()
     async def dummy_query(args: DummyArgs) -> DummyResult:
         return DummyResult(result=args.num * 2)
 
@@ -55,7 +55,6 @@ async def test_queryable_with_env_var_requirements():
         await query_with_env_var(DummyArgs(num=1))
     assert "TEST_ENV_VAR" in str(excinfo.value)
 
-    # Now test invalid type as the env variable
     @queryable(env_vars={"TEST_ENV_VAR": int})
     async def query_with_invalid_type(args: DummyArgs) -> DummyResult:
         return DummyResult(result=args.num * 2)
@@ -71,7 +70,7 @@ async def test_queryable_with_env_var_requirements():
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_queryable_invalid_positional_type():
-    @queryable(returns="model")
+    @queryable()
     async def dummy_query(args: DummyArgs) -> DummyResult:
         return DummyResult(result=args.num * 2)
 
@@ -85,7 +84,6 @@ async def test_queryable_invalid_positional_type():
 # Test 3: Queryable function missing a return annotation.
 # -----------------------------------------------------------------------------
 def test_queryable_missing_return_annotation():
-    # Defining the function inside a context that expects a TypeError
     with pytest.raises(TypeError) as excinfo:
 
         @queryable()
@@ -100,14 +98,15 @@ def test_queryable_missing_return_annotation():
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_queryable_incorrect_frame_return():
-    @queryable(frame_type="pandas")
+    @queryable()
     async def query_frame(args: DummyArgs) -> pd.DataFrame:
         # Incorrectly return a list instead of a DataFrame
         return [1, 2, 3]
 
     with pytest.raises(TypeError) as excinfo:
         await query_frame(DummyArgs(num=1))
-    assert "expected to return a pandas.DataFrame" in str(excinfo.value)
+    # Now expecting a generic error about a valid frame-like object
+    assert "expected to return a valid frame-like object" in str(excinfo.value)
 
 
 # -----------------------------------------------------------------------------
@@ -115,30 +114,16 @@ async def test_queryable_incorrect_frame_return():
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_queryable_valid_frame_return():
-    @queryable(frame_type="pandas")
+    @queryable()
     async def query_frame(args: DummyArgs) -> pd.DataFrame:
         # Return a valid DataFrame (or a tuple with optional metadata)
         df = pd.DataFrame({"num": [args.num, args.num + 1]})
         return df, {"source": "test"}
 
     result = await query_frame(DummyArgs(num=3))
-    # Since the function returned a tuple, extract the frame object.
     frame_obj = result[0] if isinstance(result, tuple) else result
     assert isinstance(frame_obj, pd.DataFrame)
     assert frame_obj["num"].tolist() == [3, 4]
-
-
-@pytest.mark.asyncio
-async def test_queryable_invalid_frame_type():
-    with pytest.raises(ValueError) as excinfo:
-
-        @queryable(frame_type="invalid")
-        async def query_frame(args: DummyArgs) -> pd.DataFrame:
-            return [1, 2, 3]
-
-        await query_frame(DummyArgs(num=1))
-
-    assert "Unknown frame_type 'invalid'" in str(excinfo.value)
 
 
 # -----------------------------------------------------------------------------
@@ -186,7 +171,7 @@ async def test_mutatable_invalid_return():
 
     with pytest.raises(TypeError) as excinfo:
         await bad_mutation(InputModel(value=4))
-    assert "must return an instance of" in str(excinfo.value)
+    assert "must return" in str(excinfo.value)
 
 
 # -----------------------------------------------------------------------------
@@ -194,10 +179,9 @@ async def test_mutatable_invalid_return():
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_dependencies_check():
-    # Use a dependency name that is unlikely to exist.
     fake_dependency = "nonexistent_dependency_12345"
 
-    @queryable(dependencies=[fake_dependency], returns="model")
+    @queryable(dependencies=[fake_dependency])
     async def query_with_dependency(args: DummyArgs) -> DummyResult:
         return DummyResult(result=args.num)
 
@@ -215,20 +199,18 @@ def test_script_decorator_cli_args(monkeypatch, capsys):
         input_file: str = Field(
             "default.txt",
             description="Path to the input file",
-            # Simulate argparse settings.
-            **{"argparse": {"cli_required": True, "metavar": "FILE"}},
+            argparse={"cli_required": True, "metavar": "FILE"},
         )
         mode: str = Field(
             ...,
             description="Operation mode",
-            **{"argparse": {"choices": ["fast", "slow"], "metavar": "MODE"}},
+            argparse={"choices": ["fast", "slow"], "metavar": "MODE"},
         )
 
     # Prepare fake command-line arguments.
     test_args = ["prog", "--input_file", "test.txt", "--mode", "fast"]
     monkeypatch.setattr(sys, "argv", test_args)
 
-    # Create a flag to capture that the function was called.
     called = False
 
     @script(arg_parser_model=CLIArgs)
@@ -245,12 +227,9 @@ def test_script_decorator_cli_args(monkeypatch, capsys):
         assert isinstance(logger, logging.Logger)
         # The context-provided logger should be the same as the passed logger.
         assert logger is ctx_logger
-        # Optionally, write something to stdout.
         print("Script executed.")
 
-    # Call the decorated function.
     main()
-    # Capture the printed output.
     captured = capsys.readouterr().out
     assert "Script executed." in captured
     assert called is True
@@ -263,42 +242,33 @@ async def test_script_decorator_cli_args_async(monkeypatch, capsys):
         input_file: str = Field(
             "default.txt",
             description="Path to the input file",
-            # Simulate argparse settings.
-            **{"argparse": {"cli_required": True, "metavar": "FILE"}},
+            argparse={"cli_required": True, "metavar": "FILE"},
         )
         mode: str = Field(
             ...,
             description="Operation mode",
-            **{"argparse": {"choices": ["fast", "slow"], "metavar": "MODE"}},
+            argparse={"choices": ["fast", "slow"], "metavar": "MODE"},
         )
 
     # Prepare fake command-line arguments.
     test_args = ["prog", "--input_file", "test.txt", "--mode", "fast"]
     monkeypatch.setattr(sys, "argv", test_args)
 
-    # Create a flag to capture that the function was called.
     called = False
 
     @script(arg_parser_model=CLIArgs)
     async def main(cli_args: CLIArgs, logger: logging.Logger):
         nonlocal called
         called = True
-        # Inside the script, we can also retrieve the context logger/args.
         ctx_logger = get_script_logger()
         ctx_args = get_script_args()
-        # Check that the CLI args match our test input.
         assert cli_args.input_file == "test.txt"
         assert cli_args.mode == "fast"
-        # Logger should be a Logger instance.
         assert isinstance(logger, logging.Logger)
-        # The context-provided logger should be the same as the passed logger.
         assert logger is ctx_logger
-        # Optionally, write something to stdout.
         print("Script executed.")
 
-    # Call the decorated function.
     await main()
-    # Capture the printed output.
     captured = capsys.readouterr().out
     assert "Script executed." in captured
     assert called is True

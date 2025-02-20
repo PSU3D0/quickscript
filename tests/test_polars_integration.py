@@ -14,7 +14,7 @@ class PolarsQueryArgs(BaseModel):
 
 @pytest.mark.asyncio
 async def test_polars_basic_frame():
-    @queryable(frame_type="polars")
+    @queryable
     async def query_polars(args: PolarsQueryArgs) -> pl.DataFrame:
         data = {"id": [1, 2, 3, 4], "value": [10, 20, 30, 40]}
         return pl.DataFrame(data)
@@ -27,7 +27,7 @@ async def test_polars_basic_frame():
 
 @pytest.mark.asyncio
 async def test_polars_with_metadata():
-    @queryable(frame_type="polars")
+    @queryable
     async def query_polars_meta(args: PolarsQueryArgs) -> pl.DataFrame:
         data = {"id": [1, 2], "value": [args.min_value, args.min_value * 2]}
         df = pl.DataFrame(data)
@@ -42,7 +42,7 @@ async def test_polars_with_metadata():
 
 @pytest.mark.asyncio
 async def test_polars_filtered_frame():
-    @queryable(frame_type="polars")
+    @queryable
     async def query_filtered(args: PolarsQueryArgs) -> pl.DataFrame:
         data = {"id": [1, 2, 3, 4], "value": [10, 20, 30, 40]}
         df = pl.DataFrame(data)

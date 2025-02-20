@@ -14,7 +14,7 @@ class PandasQueryArgs(BaseModel):
 
 @pytest.mark.asyncio
 async def test_pandas_basic_frame():
-    @queryable(frame_type="pandas")
+    @queryable
     async def query_pandas(args: PandasQueryArgs) -> pd.DataFrame:
         data = {"id": [1, 2, 3, 4], "value": [10, 20, 30, 40]}
         return pd.DataFrame(data)
@@ -27,7 +27,7 @@ async def test_pandas_basic_frame():
 
 @pytest.mark.asyncio
 async def test_pandas_with_metadata():
-    @queryable(frame_type="pandas")
+    @queryable
     async def query_pandas_meta(args: PandasQueryArgs) -> pd.DataFrame:
         data = {"id": [1, 2], "value": [args.filter_value, args.filter_value * 2]}
         df = pd.DataFrame(data)
@@ -42,7 +42,7 @@ async def test_pandas_with_metadata():
 
 @pytest.mark.asyncio
 async def test_pandas_filtered_frame():
-    @queryable(frame_type="pandas")
+    @queryable
     async def query_filtered(args: PandasQueryArgs) -> pd.DataFrame:
         data = {"id": [1, 2, 3, 4], "value": [10, 20, 30, 40]}
         df = pd.DataFrame(data)

@@ -132,7 +132,7 @@
    class DataQueryArgs(BaseModel):
        query: str
 
-   @queryable(frame_type="pandas")
+   @queryable
    async def fetch_data(args: DataQueryArgs) -> "pandas.DataFrame":
        import pandas as pd
        # Simulate fetching data based on a query
@@ -159,7 +159,7 @@
        success: bool
        message: str
 
-   @mutatable()
+   @mutatable
    async def update_record(args: UpdateArgs) -> UpdateResult:
        # Simulate an update operation (e.g., a POST request)
        return UpdateResult(success=True, message=f"Record {args.record_id} updated to {args.status}")
@@ -199,7 +199,7 @@ from quickscript import queryable
 class PandasQueryArgs(BaseModel):
     filter_value: int
 
-@queryable(frame_type="pandas")
+@queryable
 async def fetch_pandas_data(args: PandasQueryArgs) -> "pandas.DataFrame":
     import pandas as pd
     # Simulate fetching data and applying a filter using Pandas
@@ -224,7 +224,7 @@ from quickscript import queryable
 class PolarsQueryArgs(BaseModel):
     min_value: int
 
-@queryable(frame_type="polars")
+@queryable
 async def fetch_polars_data(args: PolarsQueryArgs) -> "polars.DataFrame":
     import polars as pl
     # Simulate fetching data and filtering using Polars
@@ -249,7 +249,7 @@ from quickscript import queryable
 class ArrowQueryArgs(BaseModel):
     key: str
 
-@queryable(frame_type="arrow")
+@queryable
 async def fetch_arrow_data(args: ArrowQueryArgs) -> "pyarrow.Table":
     import pyarrow as pa
     # Simulate creating a table with PyArrow

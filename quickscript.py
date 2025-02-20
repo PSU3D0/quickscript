@@ -48,60 +48,44 @@ from typing import (
     Callable,
     Dict,
     List,
+    Literal,
     Optional,
     Type,
     TypeVar,
-    Generic,
-    Literal,
     Union,
     Tuple,
-    Protocol,
-    get_type_hints,
     get_origin,
     get_args,
+    get_type_hints,
 )
 from pydantic import BaseModel
 
 # -----------------------------------------------------------------------------
-# Global Flag for Runtime Typechecking
+# Global Runtime Typechecking Flag
 # -----------------------------------------------------------------------------
-GLOBAL_RUNTIME_TYPECHECKING: bool = not (
-    os.getenv("QUICKSCRIPT_DISABLE_RUNTIME_TYPECHECKING", "").lower()
-    in ("1", "true", "yes")
-)
+GLOBAL_RUNTIME_TYPECHECKING: bool = os.getenv(
+    "QUICKSCRIPT_DISABLE_RUNTIME_TYPECHECKING", ""
+).lower() not in ("1", "true", "yes")
 
 # -----------------------------------------------------------------------------
-# Generic Types for State and Config
+# Try importing frame libraries
 # -----------------------------------------------------------------------------
-TState = TypeVar("TState", bound=BaseModel)
-TConfig = TypeVar("TConfig", bound=BaseModel)
-
-# -----------------------------------------------------------------------------
-# Generic Types for Mutatable Functions
-# -----------------------------------------------------------------------------
-TInput = TypeVar("TInput", bound=BaseModel)
-TOutput = TypeVar("TOutput", bound=BaseModel)
-
-# -----------------------------------------------------------------------------
-# Frame Type Declarations for Queryable Functions
-# -----------------------------------------------------------------------------
-FrameTypeLiteral = Literal["pandas", "polars", "arrow"]
-
 try:
-    import pandas as pd  # type: ignore
+    import pandas as pd
 except ImportError:
     pd = None
-
 try:
-    import polars as pl  # type: ignore
+    import polars as pl
 except ImportError:
     pl = None
-
 try:
-    import pyarrow as pa  # type: ignore
+    import pyarrow as pa
 except ImportError:
     pa = None
 
+# -----------------------------------------------------------------------------
+# FrameLike: union of acceptable frame types
+# -----------------------------------------------------------------------------
 FrameLike = Union[
     pd.DataFrame if pd is not None else Any,
     pl.DataFrame if pl is not None else Any,
@@ -110,44 +94,18 @@ FrameLike = Union[
 
 
 # -----------------------------------------------------------------------------
-# Protocols for Callable Types
-# -----------------------------------------------------------------------------
-class QueryableFunc(Protocol, Generic[TConfig, TState, TOutput]):
-    async def __call__(self, *args: Any, **kwargs: Any) -> Union[
-        Tuple[FrameLike, Optional[Dict[str, Any]]],
-        TOutput,
-        List[TOutput],
-    ]:
-        """
-        A queryable function takes optional arguments and returns one of:
-          - a tuple (frame-like object, optional metadata dict),
-          - a single BaseModel instance (of type TOutput), or
-          - a list of BaseModel instances (of type TOutput).
-        """
-        ...
-
-
-class MutatableFunc(Protocol, Generic[TConfig, TState, TInput, TOutput]):
-    async def __call__(self, *args: Any, **kwargs: Any) -> TOutput:
-        """
-        A mutatable function takes optional arguments, performs some side effect, and returns an output.
-        """
-        ...
-
-
-# -----------------------------------------------------------------------------
-# Runtime Checking Utilities
+# Helpers for dependency and env var checks
 # -----------------------------------------------------------------------------
 def check_env_vars(env_vars: Dict[str, Type]) -> None:
-    for var, var_type in env_vars.items():
+    for var, typ in env_vars.items():
         value = os.getenv(var)
         if value is None:
             raise EnvironmentError(f"Environment variable '{var}' is not set.")
         try:
-            var_type(value)
+            typ(value)
         except Exception as e:
             raise ValueError(
-                f"Environment variable '{var}' cannot be cast to {var_type}: {e}"
+                f"Environment variable '{var}' cannot be cast to {typ}: {e}"
             )
 
 
@@ -160,316 +118,197 @@ def check_dependencies(dependencies: List[str]) -> None:
 
 
 # -----------------------------------------------------------------------------
-# Decorators for Declaring Dependencies and Environment Variables
+# The unified decorator builder (for queryable & mutatable)
 # -----------------------------------------------------------------------------
-def queryable(
+T = TypeVar("T", bound=Callable[..., Any])
+
+
+def _build_decorator(
+    mode: Literal["queryable", "mutatable"],
+    _func: Optional[T] = None,
     *,
-    frame_type: Optional[FrameTypeLiteral] = None,
-    returns: Optional[Literal["frame", "model", "model_list"]] = None,
     dependencies: Optional[List[str]] = None,
     env_vars: Optional[Dict[str, Type]] = None,
     runtime_typechecking: bool = True,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """
-    Decorator for queryable functions.
-
-    The decorated function must be asynchronous and may accept a single optional positional argument,
-    which must be annotated with a subclass of pydantic.BaseModel. The function can also accept any keyword
-    arguments. Additionally, the function must specify a return type annotation, which is used to infer the expected
-    return type as one of:
-      - "frame": The function returns a frame-like object (or a tuple of (frame, optional metadata)).
-      - "model": The function returns a single BaseModel instance.
-      - "model_list": The function returns a list of BaseModel instances.
-
-    Parameters:
-      - frame_type: Which frame type this function returns (e.g. "pandas", "polars", "arrow").
-         Must be provided if the return type is inferred as "frame".
-      - returns: Optionally, explicitly specify the expected return type. If omitted, it is inferred from the function's
-         return annotation.
-      - dependencies: List of third-party package names required.
-      - env_vars: Dictionary mapping environment variable names to expected types.
-      - runtime_typechecking: If True (the default) runtime type and dependency checking will occur.
-          This can be disabled globally via the QUICKSCRIPT_DISABLE_RUNTIME_TYPECHECKING environment variable.
-    """
+) -> Callable[[T], T]:
     dependencies = dependencies or []
     env_vars = env_vars or {}
 
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    def decorator(func: T) -> T:
         sig = inspect.signature(func)
-        # Allow only up to one positional argument (which must be a BaseModel if provided)
-        positional_params = [
-            param
-            for param in sig.parameters.values()
-            if param.kind
+        # Allow at most one positional argument (if provided, must be a subclass of BaseModel)
+        positional = [
+            p
+            for p in sig.parameters.values()
+            if p.kind
             in (
                 inspect.Parameter.POSITIONAL_ONLY,
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
             )
         ]
-        if len(positional_params) > 1:
+        if len(positional) > 1:
             raise ValueError(
-                f"Queryable function '{func.__name__}' can accept at most one positional argument, got {len(positional_params)}"
+                f"{mode.capitalize()} function '{func.__name__}' can accept at most one positional argument."
             )
-        if positional_params:
-            pos_param = positional_params[0]
-            if pos_param.annotation is inspect.Parameter.empty:
-                raise TypeError(
-                    f"Queryable function '{func.__name__}' positional argument '{pos_param.name}' must have a type annotation of a pydantic model."
-                )
-            if not (
-                isinstance(pos_param.annotation, type)
-                and issubclass(pos_param.annotation, BaseModel)
+        if positional:
+            p = positional[0]
+            if p.annotation is inspect.Parameter.empty or not (
+                isinstance(p.annotation, type) and issubclass(p.annotation, BaseModel)
             ):
                 raise TypeError(
-                    f"Queryable function '{func.__name__}' positional argument '{pos_param.name}' must be a subclass of pydantic.BaseModel."
+                    f"{mode.capitalize()} function '{func.__name__}' positional argument '{p.name}' must be annotated with a subclass of pydantic.BaseModel."
                 )
 
-        # Ensure a return type annotation is provided.
+        # Check return annotation
         if sig.return_annotation is inspect.Signature.empty:
             raise TypeError(
-                f"Queryable function '{func.__name__}' must have a return type annotation."
+                f"{mode.capitalize()} function '{func.__name__}' must have a return type annotation."
             )
-
-        # Infer the expected return type from the function's return annotation.
         ret_ann = sig.return_annotation
-        if get_origin(ret_ann) in (list, List):
-            inner = get_args(ret_ann)[0]
-            if isinstance(inner, type) and issubclass(inner, BaseModel):
-                inferred_return: Literal["frame", "model", "model_list"] = "model_list"
-            else:
-                raise TypeError(
-                    f"Queryable function '{func.__name__}' return type is a list but its inner type is not a subclass of pydantic.BaseModel."
-                )
-        elif isinstance(ret_ann, type) and issubclass(ret_ann, BaseModel):
-            inferred_return = "model"
-        else:
-            inferred_return = "frame"
 
-        # Use the explicit 'returns' if provided; otherwise, use the inferred type.
-        if returns is None:
-            returns_value = inferred_return
-        else:
-            if returns != inferred_return:
-                raise ValueError(
-                    f"Queryable function '{func.__name__}' has a return annotation that infers '{inferred_return}' but "
-                    f"the decorator was provided with returns='{returns}'. They must match."
-                )
-            returns_value = returns
-
-        # For frame-like returns, ensure a frame_type is provided.
-        if returns_value == "frame" and frame_type is None:
-            raise ValueError(
-                f"Queryable function '{func.__name__}' is inferred to return a frame-like object, so 'frame_type' must be specified."
-            )
-
-        setattr(func, "_frame_type", frame_type)
-        setattr(func, "_returns", returns_value)
-        setattr(func, "_dependencies", dependencies)
-        setattr(func, "_env_vars", env_vars)
-
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            typecheck_enabled = runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING
-            if typecheck_enabled:
-                check_dependencies(dependencies)
-                check_env_vars(env_vars)
-                bound = sig.bind(*args, **kwargs)
-                bound.apply_defaults()
-                if positional_params:
-                    pos_arg = bound.arguments.get(positional_params[0].name)
-                    if pos_arg is not None and not isinstance(
-                        pos_arg, positional_params[0].annotation
-                    ):
-                        raise TypeError(
-                            f"In queryable '{func.__name__}', argument '{positional_params[0].name}' must be an instance of {positional_params[0].annotation}."
-                        )
-            result = await func(*args, **kwargs)
-
-            if typecheck_enabled:
-                # Runtime checking for the returned value based on the inferred return type.
-                if returns_value == "frame":
-                    # Allow either a tuple (frame, [metadata]) or a direct frame-like object.
-                    if isinstance(result, tuple):
-                        if len(result) not in (1, 2):
-                            raise ValueError(
-                                f"Queryable '{func.__name__}' returning a tuple must have 1 or 2 elements."
-                            )
-                        frame_obj = result[0]
-                    else:
-                        frame_obj = result
-
-                    # Validate the frame type.
-                    if frame_type == "pandas":
-                        if pd is None or not isinstance(frame_obj, pd.DataFrame):
-                            raise TypeError(
-                                f"Queryable '{func.__name__}' expected to return a pandas.DataFrame."
-                            )
-                    elif frame_type == "polars":
-                        if pl is None or not isinstance(frame_obj, pl.DataFrame):
-                            raise TypeError(
-                                f"Queryable '{func.__name__}' expected to return a polars.DataFrame."
-                            )
-                    elif frame_type == "arrow":
-                        if pa is None or not isinstance(frame_obj, pa.Table):
-                            raise TypeError(
-                                f"Queryable '{func.__name__}' expected to return a pyarrow.Table."
-                            )
-                    else:
-                        raise ValueError(
-                            f"Unknown frame_type '{frame_type}' declared in queryable '{func.__name__}'."
-                        )
-                elif returns_value == "model":
-                    if not isinstance(result, BaseModel):
-                        raise TypeError(
-                            f"Queryable '{func.__name__}' expected to return a BaseModel instance."
-                        )
-                elif returns_value == "model_list":
-                    if not (
-                        isinstance(result, list)
-                        and all(isinstance(item, BaseModel) for item in result)
-                    ):
-                        raise TypeError(
-                            f"Queryable '{func.__name__}' expected to return a list of BaseModel instances."
-                        )
+        if mode == "queryable":
+            # Infer expected return category:
+            if get_origin(ret_ann) in (list, List):
+                inner = get_args(ret_ann)[0]
+                if isinstance(inner, type) and issubclass(inner, BaseModel):
+                    expected = "model_list"
                 else:
-                    raise ValueError(
-                        f"Queryable '{func.__name__}' has unknown returns declaration: {returns_value}"
+                    raise TypeError(
+                        f"Queryable '{func.__name__}' returns a list but its inner type is not a subclass of BaseModel."
                     )
-            return result
+            elif isinstance(ret_ann, type) and issubclass(ret_ann, BaseModel):
+                expected = "model"
+            else:
+                expected = "frame"
+        else:  # mutatable
+            if not (isinstance(ret_ann, type) and issubclass(ret_ann, BaseModel)):
+                raise TypeError(
+                    f"Mutatable function '{func.__name__}' must have a return type annotation that is a subclass of BaseModel."
+                )
+            expected = "model"
 
-        return wrapper
+        # The actual wrapper
+        def _validate_args(bound):
+            if positional:
+                arg = bound.arguments.get(positional[0].name)
+                if arg is not None and not isinstance(arg, positional[0].annotation):
+                    raise TypeError(
+                        f"In {mode} '{func.__name__}', argument '{positional[0].name}' must be an instance of {positional[0].annotation}."
+                    )
 
-    return decorator
+        def _validate_result(result):
+            if mode == "queryable":
+                if expected == "frame":
+                    frame_obj = result[0] if isinstance(result, tuple) else result
+                    if not (
+                        (pd is not None and isinstance(frame_obj, pd.DataFrame))
+                        or (pl is not None and isinstance(frame_obj, pl.DataFrame))
+                        or (pa is not None and isinstance(frame_obj, pa.Table))
+                    ):
+                        raise TypeError(
+                            f"Queryable '{func.__name__}' expected to return a valid frame-like object."
+                        )
+                elif expected == "model" and not isinstance(result, BaseModel):
+                    raise TypeError(
+                        f"Queryable '{func.__name__}' expected to return a BaseModel instance."
+                    )
+                elif expected == "model_list" and not (
+                    isinstance(result, list)
+                    and all(isinstance(item, BaseModel) for item in result)
+                ):
+                    raise TypeError(
+                        f"Queryable '{func.__name__}' expected to return a list of BaseModel instances."
+                    )
+            else:  # mutatable
+                if not isinstance(result, ret_ann):
+                    raise TypeError(
+                        f"Mutatable '{func.__name__}' returned {type(result)} but must return {ret_ann}."
+                    )
+
+        if asyncio.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
+                    check_dependencies(dependencies)
+                    check_env_vars(env_vars)
+                    bound = sig.bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    _validate_args(bound)
+                result = await func(*args, **kwargs)
+                if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
+                    _validate_result(result)
+                return result
+
+            return async_wrapper  # type: ignore
+        else:
+
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
+                    check_dependencies(dependencies)
+                    check_env_vars(env_vars)
+                    bound = sig.bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    _validate_args(bound)
+                result = func(*args, **kwargs)
+                if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
+                    _validate_result(result)
+                return result
+
+            return sync_wrapper  # type: ignore
+
+    return decorator(_func) if _func is not None else decorator
+
+
+# -----------------------------------------------------------------------------
+# Decorators for Declaring Queryables and Mutatables (now unified)
+# -----------------------------------------------------------------------------
+def queryable(
+    _func: Optional[Callable[..., Any]] = None,
+    *,
+    dependencies: Optional[List[str]] = None,
+    env_vars: Optional[Dict[str, Type]] = None,
+    runtime_typechecking: bool = True,
+) -> Callable:
+    """
+    Decorator for queryable functions.
+    The function’s return type annotation is used to infer the expected type:
+      - If annotated as a list of BaseModel, it must return a list of BaseModel instances.
+      - If annotated as a BaseModel subclass, it must return a BaseModel instance.
+      - Otherwise it is assumed to return a frame-like object (pandas, polars, or pyarrow).
+    """
+    return _build_decorator(
+        "queryable",
+        _func,
+        dependencies=dependencies,
+        env_vars=env_vars,
+        runtime_typechecking=runtime_typechecking,
+    )
 
 
 def mutatable(
+    _func: Optional[Callable[..., Any]] = None,
+    *,
     dependencies: Optional[List[str]] = None,
     env_vars: Optional[Dict[str, Type]] = None,
     runtime_typechecking: bool = True,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+) -> Callable:
     """
     Decorator for mutatable functions.
-
-    The decorated function must be asynchronous and may accept a single optional positional argument,
-    which must be annotated with a subclass of pydantic.BaseModel. The function can also accept any keyword
-    arguments. Additionally, the function must specify a return type annotation and, for mutatable functions,
-    that return type must be a subclass of pydantic.BaseModel.
-
-    Parameters:
-      - dependencies: List of third-party package names required.
-      - env_vars: Dictionary mapping environment variable names to expected types.
-      - runtime_typechecking: If True (the default) runtime type and dependency checking will occur.
-          This can be disabled globally via the QUICKSCRIPT_DISABLE_RUNTIME_TYPECHECKING environment variable.
+    The function must have a return type annotation that is a subclass of BaseModel.
     """
-    dependencies = dependencies or []
-    env_vars = env_vars or {}
-
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        sig = inspect.signature(func)
-        return_type_klass = get_origin(sig.return_annotation) or sig.return_annotation
-        # Allow only up to one positional argument (which must be a BaseModel if provided)
-        positional_params = [
-            param
-            for param in sig.parameters.values()
-            if param.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-        ]
-        if len(positional_params) > 1:
-            raise ValueError(
-                f"Mutatable function '{func.__name__}' can accept at most one positional argument, got {len(positional_params)}"
-            )
-        if positional_params:
-            pos_param = positional_params[0]
-            if pos_param.annotation is inspect.Parameter.empty:
-                raise TypeError(
-                    f"Mutatable function '{func.__name__}' positional argument '{pos_param.name}' must have a type annotation of a pydantic model."
-                )
-            if not (
-                isinstance(pos_param.annotation, type)
-                and issubclass(pos_param.annotation, BaseModel)
-            ):
-                raise TypeError(
-                    f"Mutatable function '{func.__name__}' positional argument '{pos_param.name}' must be a subclass of pydantic.BaseModel."
-                )
-
-        # Ensure a return type annotation is provided and that it is a subclass of BaseModel.
-        if sig.return_annotation is inspect.Signature.empty:
-            raise TypeError(
-                f"Mutatable function '{func.__name__}' must have a return type annotation."
-            )
-        if not (
-            isinstance(sig.return_annotation, type)
-            and issubclass(sig.return_annotation, BaseModel)
-        ):
-            raise TypeError(
-                f"Mutatable function '{func.__name__}' return type must be a subclass of pydantic.BaseModel."
-            )
-
-        setattr(func, "_dependencies", dependencies)
-        setattr(func, "_env_vars", env_vars)
-
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs) -> Any:
-            typecheck_enabled = runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING
-            if typecheck_enabled:
-                check_dependencies(dependencies)
-                check_env_vars(env_vars)
-                bound = sig.bind(*args, **kwargs)
-                bound.apply_defaults()
-                if positional_params:
-                    pos_arg = bound.arguments.get(positional_params[0].name)
-                    if pos_arg is not None and not isinstance(
-                        pos_arg, positional_params[0].annotation
-                    ):
-                        raise TypeError(
-                            f"In mutatable '{func.__name__}', argument '{positional_params[0].name}' must be an instance of {positional_params[0].annotation}."
-                        )
-            result = await func(*args, **kwargs)
-            if typecheck_enabled and return_type_klass is not None:
-                if not isinstance(result, return_type_klass):
-                    raise TypeError(
-                        f"Mutatable '{func.__name__}' returned an instance of {type(result)} "
-                        f"but must return an instance of {return_type_klass}."
-                    )
-            return result
-
-        return wrapper
-
-    return decorator
+    return _build_decorator(
+        "mutatable",
+        _func,
+        dependencies=dependencies,
+        env_vars=env_vars,
+        runtime_typechecking=runtime_typechecking,
+    )
 
 
 # -----------------------------------------------------------------------------
-# Helper: Parse CLI Arguments from a Pydantic Model
-# -----------------------------------------------------------------------------
-def parse_cli_args(arg_parser_model: Type[BaseModel]) -> BaseModel:
-    """
-    Build an argparse.ArgumentParser from a pydantic model, taking into account extra
-    CLI keyword arguments provided in the Field's extra metadata under the key "argparse".
-    """
-    parser = argparse.ArgumentParser(description=arg_parser_model.__doc__ or "")
-    type_hints = get_type_hints(arg_parser_model)
-    for field_name, field in arg_parser_model.model_fields.items():
-        parser_kwargs = {
-            "type": type_hints[field_name],
-            "required": field.is_required(),
-            "default": field.default,
-            "help": field.description,
-        }
-        extra_kwargs = field.json_schema_extra.get("argparse", {})
-        if "cli_required" in extra_kwargs:
-            parser_kwargs["required"] = extra_kwargs.pop("cli_required")
-        parser_kwargs.update(extra_kwargs)
-        parser.add_argument(f"--{field_name}", **parser_kwargs)
-    parsed = parser.parse_args()
-    args_dict = vars(parsed)
-    return arg_parser_model(**args_dict)
-
-
-# -----------------------------------------------------------------------------
-# Script Decorator with ContextVars and Typed Argparse Support
+# Script Decorator and Helpers (unchanged)
 # -----------------------------------------------------------------------------
 script_logger_var: contextvars.ContextVar[logging.Logger] = contextvars.ContextVar(
     "script_logger", default=logging.getLogger("default")
@@ -484,16 +323,12 @@ TScript = TypeVar("TScript", bound=Callable[..., Any])
 def script(
     arg_parser_model: Optional[Type[BaseModel]] = None,
 ) -> Callable[[TScript], TScript]:
-    """
-    Decorator for script entry points that sets up context variables for logger and CLI arguments.
-    """
-
     def decorator(func: TScript) -> TScript:
         sig = inspect.signature(func)
 
-        def setup_context() -> (
-            Tuple[logging.Logger, contextvars.Token, Optional[contextvars.Token]]
-        ):
+        def setup_context() -> Tuple[
+            logging.Logger, contextvars.Token, Optional[contextvars.Token]
+        ]:
             logger = logging.getLogger(func.__name__)
             token_logger = script_logger_var.set(logger)
             token_args = None
@@ -549,20 +384,30 @@ def script(
     return decorator
 
 
-# -----------------------------------------------------------------------------
-# Helper Functions to Access Script Context
-# -----------------------------------------------------------------------------
+def parse_cli_args(arg_parser_model: Type[BaseModel]) -> BaseModel:
+    parser = argparse.ArgumentParser(description=arg_parser_model.__doc__ or "")
+    type_hints = get_type_hints(arg_parser_model)
+    for field_name, field in arg_parser_model.model_fields.items():
+        parser_kwargs = {
+            "type": type_hints[field_name],
+            "required": field.is_required(),
+            "default": field.default,
+            "help": field.description,
+        }
+        extra = field.json_schema_extra.get("argparse", {})
+        if "cli_required" in extra:
+            parser_kwargs["required"] = extra.pop("cli_required")
+        parser_kwargs.update(extra)
+        parser.add_argument(f"--{field_name}", **parser_kwargs)
+    args = parser.parse_args()
+    return arg_parser_model(**vars(args))
+
+
 def get_script_logger() -> logging.Logger:
-    """
-    Retrieve the current script logger from context.
-    """
     return script_logger_var.get()
 
 
 def get_script_args() -> Optional[BaseModel]:
-    """
-    Retrieve the current CLI arguments (as a pydantic model) from context.
-    """
     return script_args_var.get()
 
 
@@ -581,9 +426,7 @@ if __name__ == "__main__":
     from pydantic import Field
 
     class CLIArgs(BaseModel):
-        """
-        Command-line arguments for the script.
-        """
+        """Command-line arguments for the script."""
 
         input_file: str = Field(
             "default.txt",
