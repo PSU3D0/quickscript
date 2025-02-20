@@ -10,6 +10,7 @@
 [![pypi](https://img.shields.io/pypi/v/quickscript.svg)](https://pypi.org/project/quickscript/)
 [![python](https://img.shields.io/pypi/pyversions/quickscript.svg)](https://pypi.org/project/quickscript/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![codecov](https://codecov.io/gh/PSU3D0/quickscript/branch/main/graphs/badge.svg)](https://codecov.io/github/PSU3D0/quickscript)
 
 ---
 
