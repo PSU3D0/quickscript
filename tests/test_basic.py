@@ -45,6 +45,17 @@ async def test_queryable_valid_model_return():
     assert result.result == 10
 
 
+def test_queryable_valid_model_return_sync():
+    @queryable
+    def dummy_query(args: DummyArgs) -> DummyResult:
+        return DummyResult(result=args.num * 2)
+
+    args = DummyArgs(num=5)
+    result = dummy_query(args)
+    assert isinstance(result, DummyResult)
+    assert result.result == 10
+
+
 @pytest.mark.asyncio
 async def test_queryable_with_env_var_requirements():
     @queryable(env_vars={"TEST_ENV_VAR": int})
@@ -76,8 +87,25 @@ async def test_queryable_invalid_positional_type():
 
     # Passing a plain dict instead of a DummyArgs instance
     with pytest.raises(TypeError) as excinfo:
-        await dummy_query({"num": 5})
+        await dummy_query(5)
     assert "must be an instance of" in str(excinfo.value)
+
+    with pytest.raises(ValueError) as excinfo:
+
+        @queryable
+        def multi_positional(args: DummyArgs, other: DummyArgs) -> DummyResult:
+            return DummyResult(result=args.num * 2)
+
+    assert "can accept at most one positional argument" in str(excinfo.value)
+
+    # Ensure with pydantic, we can accept a dict even with a basemodel annotation
+    @queryable
+    def test(args: DummyArgs) -> DummyResult:
+        return DummyResult(result=args.num * 2)
+
+    result = test({"num": 5})
+    assert isinstance(result, DummyResult)
+    assert result.result == 10
 
 
 # -----------------------------------------------------------------------------
@@ -159,6 +187,17 @@ async def test_mutatable_valid():
     assert result.output == 12
 
 
+def test_mutatable_valid_sync():
+    @mutatable
+    def mutate_value(args: InputModel) -> OutputModel:
+        return OutputModel(output=args.value * 3)
+
+    inp = InputModel(value=4)
+    result = mutate_value(inp)
+    assert isinstance(result, OutputModel)
+    assert result.output == 12
+
+
 # -----------------------------------------------------------------------------
 # Test 8: Mutatable function returning an invalid (non-BaseModel) result.
 # -----------------------------------------------------------------------------
@@ -227,6 +266,7 @@ def test_script_decorator_cli_args(monkeypatch, capsys):
         assert isinstance(logger, logging.Logger)
         # The context-provided logger should be the same as the passed logger.
         assert logger is ctx_logger
+        assert ctx_args is not None
         print("Script executed.")
 
     main()
@@ -266,6 +306,7 @@ async def test_script_decorator_cli_args_async(monkeypatch, capsys):
         assert cli_args.mode == "fast"
         assert isinstance(logger, logging.Logger)
         assert logger is ctx_logger
+        assert ctx_args is not None
         print("Script executed.")
 
     await main()

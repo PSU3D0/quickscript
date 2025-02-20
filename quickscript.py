@@ -191,10 +191,21 @@ def _build_decorator(
         def _validate_args(bound):
             if positional:
                 arg = bound.arguments.get(positional[0].name)
-                if arg is not None and not isinstance(arg, positional[0].annotation):
-                    raise TypeError(
-                        f"In {mode} '{func.__name__}', argument '{positional[0].name}' must be an instance of {positional[0].annotation}."
-                    )
+                annotation = positional[0].annotation
+                if arg is not None and not isinstance(arg, annotation):
+                    if isinstance(arg, dict) and issubclass(annotation, BaseModel):
+                        try:
+                            casted = annotation.model_validate(arg)
+                        except ValueError as e:
+                            raise ValueError(
+                                f"In {mode} '{func.__name__}', dictionary argument '{positional[0].name}' could not be validated as a {annotation}."
+                            ) from e
+                        else:
+                            bound.arguments[positional[0].name] = casted
+                    else:
+                        raise TypeError(
+                            f"In {mode} '{func.__name__}', argument '{positional[0].name}' must be an instance of {annotation}."
+                        )
 
         def _validate_result(result):
             if mode == "queryable":
@@ -235,7 +246,7 @@ def _build_decorator(
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
                     _validate_args(bound)
-                result = await func(*args, **kwargs)
+                result = await func(*bound.args, **bound.kwargs)
                 if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
                     _validate_result(result)
                 return result
@@ -251,7 +262,7 @@ def _build_decorator(
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
                     _validate_args(bound)
-                result = func(*args, **kwargs)
+                result = func(*bound.args, **bound.kwargs)
                 if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
                     _validate_result(result)
                 return result
