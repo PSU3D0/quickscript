@@ -44,6 +44,13 @@
 - **CLI Integration:**
   Automatically build command-line interfaces from your Pydantic models.
 
+- **Server & Communication Integrations:**
+  Seamlessly expose your functions via multiple protocols:
+  - **REST:** Turn your functions into HTTP endpoints with minimal configuration.
+  - **GraphQL:** Automatically generate a GraphQL schema from your decorated functions.
+  - **gRPC:** Expose services with built-in gRPC support.
+  - **ZeroMQ:** Integrate with high-performance messaging using ZeroMQ.
+
 - **LLM-Friendly:**
   Its brevity and rich docstrings make it ideal as context for large language models (LLMs), ensuring consistent patterns in generated code. Add this script as read-only context to **aider** or **cursor** to guide the LLM on usage
 
@@ -58,6 +65,72 @@
 - Decorator usage can be "discovered" to automatically generate complete documentation, including types.
 - Scripts can be organized into **collections** and exposed to frontend frameworks in a myriad of ways.
 
+
+---
+
+## Server and Communication Integrations 🌐
+
+Quickscript now goes beyond simple scripting. You can expose your functions as REST endpoints, GraphQL operations, gRPC services, or integrate with ZeroMQ for robust messaging protocols.
+
+### REST Integration
+Use the `@supports_rest` decorator to mark functions as REST endpoints, then launch the server with `run_rest_server`.
+
+```python
+from quickscript.plugins.rest import supports_rest
+
+@supports_rest(path="/api/data", method="GET")
+async def get_data():
+    return {"message": "Hello from REST!"}
+```
+
+### GraphQL Integration
+Decorate your functions with `@supports_graphql` to expose them as GraphQL queries or mutations.
+
+```python
+from quickscript.plugins.graphql import supports_graphql
+
+@queryable
+@supports_graphql(name="getData", description="Fetch data via GraphQL")
+async def get_data():
+    return SimpleResponse(message="Hello from GraphQL!")
+```
+
+### gRPC Support
+Mark functions with `@supports_grpc` to easily expose them via gRPC.
+
+```python
+from quickscript.plugins.grpc import supports_grpc
+
+@mutatable
+@supports_grpc(service_name="QuickScriptService", method="Unary")
+async def update_data(args: UpdateArgs) -> UpdateResult:
+    return UpdateResult(success=True, message="Data updated via gRPC!")
+```
+
+### ZeroMQ Integration
+Use `@supports_zeromq` to expose functions over ZeroMQ protocols for high-performance messaging.
+
+```python
+from quickscript.plugins.zeromq import supports_zeromq
+
+@queryable
+@supports_zeromq(socket_mode="REP")
+async def get_zmq_data(args: DummyArgs):
+    return {"data": "Response from ZeroMQ endpoint"}
+```
+
+### Server Meta
+Enhance your functions with server-specific settings like timeouts, caching, and tags using the `@server_meta` decorator.
+
+```python
+from quickscript.plugins.server_meta import server_meta
+
+@server_meta(timeout=30, cache_ttl=300, tags=["update", "priority"], server_description="Update operation")
+@mutatable
+async def update_operation(args: InputModel) -> OutputModel:
+    # perform mutation and return result
+    ...
+```
 
 ---
 
@@ -176,6 +249,19 @@
    ```bash
    python your_script.py --input_file data.txt --mode fast
    ```
+
+### Running the Server Integrations
+
+Quickscript provides built-in commands to start various servers based on your decorated functions:
+
+- **REST Server:**  
+  `python -m quickscript rest --scripts-dir path/to/scripts --host 0.0.0.0 --port 8001`
+- **GraphQL Server:**  
+  `python -m quickscript graphql --path path/to/scripts --host 0.0.0.0 --port 8000`
+- **gRPC Server:**  
+  `python -m quickscript grpc --path path/to/scripts --port 50051`
+- **ZeroMQ Server:**  
+  `python -m quickscript zmq --path path/to/scripts`
 
 ---
 

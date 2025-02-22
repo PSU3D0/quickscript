@@ -6,9 +6,11 @@ from pydantic import BaseModel, Field
 import pandas as pd
 from unittest import mock
 
+from quickscript.quickscript import get_context_item
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from quickscript import queryable, mutatable, script, get_script_logger, get_script_args
+from quickscript import queryable, mutatable, script
 
 
 # -----------------------------------------------------------------------------
@@ -252,24 +254,19 @@ def test_script_decorator_cli_args(monkeypatch, capsys):
 
     called = False
 
-    @script(arg_parser_model=CLIArgs)
-    def main(cli_args: CLIArgs, logger: logging.Logger):
+    @script
+    def main(args: CLIArgs):
         nonlocal called
         called = True
-        # Inside the script, we can also retrieve the context logger/args.
-        ctx_logger = get_script_logger()
-        ctx_args = get_script_args()
         # Check that the CLI args match our test input.
-        assert cli_args.input_file == "test.txt"
-        assert cli_args.mode == "fast"
+        assert args.input_file == "test.txt"
+        assert args.mode == "fast"
+        logger = get_context_item("logger")
         # Logger should be a Logger instance.
         assert isinstance(logger, logging.Logger)
-        # The context-provided logger should be the same as the passed logger.
-        assert logger is ctx_logger
-        assert ctx_args is not None
         print("Script executed.")
 
-    main()
+    main(CLIArgs(input_file="test.txt", mode="fast"))
     captured = capsys.readouterr().out
     assert "Script executed." in captured
     assert called is True
@@ -296,20 +293,17 @@ async def test_script_decorator_cli_args_async(monkeypatch, capsys):
 
     called = False
 
-    @script(arg_parser_model=CLIArgs)
-    async def main(cli_args: CLIArgs, logger: logging.Logger):
+    @script
+    async def main(cli_args: CLIArgs):
         nonlocal called
         called = True
-        ctx_logger = get_script_logger()
-        ctx_args = get_script_args()
         assert cli_args.input_file == "test.txt"
         assert cli_args.mode == "fast"
+        logger = get_context_item("logger")
         assert isinstance(logger, logging.Logger)
-        assert logger is ctx_logger
-        assert ctx_args is not None
         print("Script executed.")
 
-    await main()
+    await main(CLIArgs(input_file="test.txt", mode="fast"))
     captured = capsys.readouterr().out
     assert "Script executed." in captured
     assert called is True

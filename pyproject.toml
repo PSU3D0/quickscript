@@ -19,3 +19,20 @@ dev = [
     "pytest-asyncio>=0.25.3",
     "pre-commit>=4.1.0",
 ]
+server = [
+    "starlette>=0.28.0",
+    "uvicorn>=0.27.0",
+]
+graphql = [
+    "starlette>=0.28.0",
+    "strawberry-graphql>=0.217.1",
+]
+cli = [
+    "rich>=13.9.4",
+]
+zmq = [
+    "pyzmq>=26.2.1",
+]
+grpc = [
+    "grpcio>=1.70.0",
+]

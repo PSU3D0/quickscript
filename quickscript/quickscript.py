@@ -41,24 +41,23 @@ import functools
 import asyncio
 import contextvars
 import logging
-import argparse
 import inspect
 from typing import (
     Any,
     Callable,
     Dict,
+    Iterator,
     List,
     Literal,
     Optional,
     Type,
     TypeVar,
     Union,
-    Tuple,
+    Generic,
     get_origin,
     get_args,
-    get_type_hints,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # -----------------------------------------------------------------------------
 # Global Runtime Typechecking Flag
@@ -92,6 +91,73 @@ FrameLike = Union[
     pa.Table if pa is not None else Any,
 ]
 
+TPydanticModel = TypeVar("TPydanticModel", bound=BaseModel)
+
+
+class FrameSchema(Generic[TPydanticModel]):
+    """
+    A lightweight wrapper for DataFrame-like objects with explicit column schemas.
+
+    - `iter_rows()`: Yields rows as instances of the schema.
+    - `get_pydantic_model()`: Returns the schema model for JSONSchema conversion.
+    - Supports Pandas, Polars, and PyArrow.
+    """
+
+    df_type: Literal["pandas", "polars", "pyarrow"]
+    _data: FrameLike
+    schema: BaseModel
+
+    def __init__(self, data: FrameLike, schema: Type[TPydanticModel]):
+        self.df_type = self._infer_frame_type()
+        self._data = data
+
+        self.schema = schema
+
+    def _infer_frame_type(self):
+        if pd is not None and isinstance(self.data, pd.DataFrame):
+            return "pandas"
+        elif pl is not None and isinstance(self.data, pl.DataFrame):
+            return "polars"
+        elif pa is not None and isinstance(self.data, pa.Table):
+            return "pyarrow"
+        else:
+            raise TypeError(f"Unsupported data type: {type(self.data)}")
+
+    def iter_rows(self, to_model: bool = False) -> Iterator[T]:
+        """Yields each row as a Pydantic model instance."""
+        if self.df_type == "pandas":
+            for row in self.data.to_dict(
+                orient="records"
+            ):  # Pandas/Polars/Arrow -> Dict
+                if to_model:
+                    yield self.schema(**row)
+                else:
+                    yield row
+        elif self.df_type == "polars":
+            for row in self.data.iter_rows(named=True):  # Polars -> Dict
+                if to_model:
+                    yield self.schema(**row)
+                else:
+                    yield row
+        elif self.df_type == "pyarrow":
+            for row in self.data.to_pylist():
+                if to_model:
+                    yield self.schema(**row)
+                else:
+                    yield row
+
+    def get_pydantic_model(self) -> Type[T]:
+        """Returns the associated Pydantic schema model."""
+        return self.schema
+
+    def to_json_schema(self) -> Dict:
+        """Generates JSON schema for OpenAPI integration."""
+        return self.schema.model_json_schema()
+
+    @property
+    def data(self) -> FrameLike:
+        return self._data
+
 
 # -----------------------------------------------------------------------------
 # Helpers for dependency and env var checks
@@ -123,8 +189,120 @@ def check_dependencies(dependencies: List[str]) -> None:
 T = TypeVar("T", bound=Callable[..., Any])
 
 
+class BaseMetadata(BaseModel):
+    """
+    Base metadata class for all metadata.
+    """
+
+    dependencies: List[str] = Field(
+        default_factory=list, description="A list of dependencies for the function."
+    )
+    env_vars: Dict[str, Type] = Field(
+        default_factory=dict,
+        description="A dictionary of environment variables for the function.",
+    )
+    runtime_typechecking: bool = Field(
+        default=True,
+        description="Whether to enable runtime typechecking for the function.",
+    )
+
+
+def attach_metadata(
+    func: Callable, *, namespace: Optional[str], data: BaseModel
+) -> Callable:
+    """
+    Attach metadata to a function.
+    """
+    if namespace is None:
+        namespace = func.__module__
+
+    if not hasattr(func, "__qs_metadata__"):
+        func.__qs_metadata__ = {}
+
+    if not hasattr(func, "__qs_pydantic_bases__"):
+        func.__qs_pydantic_bases__ = []
+
+    if namespace in func.__qs_metadata__:
+        raise ValueError(
+            f"Metadata for namespace '{namespace}' already exists. Have you already applied this decorator?"
+        )
+
+    func.__qs_metadata__[namespace] = data.model_dump()
+    func.__qs_pydantic_bases__.append(data)
+
+    return func
+
+
+TContextItem = TypeVar("TContextItem")
+_Context = contextvars.ContextVar("quickscript_context", default=[])
+
+
+class ContextItem(Generic[TContextItem]):
+    def __init__(self, name: str, value=None, get_value=None, aliases=None):
+        self.name = name
+        self.value = value
+        self.get_value = get_value
+        self.aliases = aliases or []
+
+    def resolve(self):
+        if self.value is not None:
+            return self.value
+        elif self.get_value is not None:
+            return self.get_value()
+        else:
+            raise ValueError(
+                f"No value or get_value provided for context item '{self.name}'"
+            )
+
+
+# A context manager that pushes a context item for the duration of a function call
+from contextlib import contextmanager
+
+
+@contextmanager
+def push_context_item(item: ContextItem):
+    # Get current context items, push this new item onto the list
+    current = _Context.get()
+    new_context = current + [item]
+    token = _Context.set(new_context)
+    try:
+        yield
+    finally:
+        _Context.reset(token)
+
+
+def get_context_item(name: str, _cast: Type[TContextItem] = None) -> TContextItem:
+    current = _Context.get()
+    for item in current:
+        if item.name == name or name in item.aliases:
+            return item.resolve()
+    raise ValueError(f"Context item '{name}' not found")
+
+
+# Now, instead of attaching the context item to the function definition,
+# create a wrapper that pushes it at call time.
+def with_context_item(name: str, *, value=None, get_value=None, aliases=None):
+    item = ContextItem(name=name, value=value, get_value=get_value, aliases=aliases)
+
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def wrapper(*args, **kwargs):
+                with push_context_item(item):
+                    return await func(*args, **kwargs)
+        else:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                with push_context_item(item):
+                    return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def _build_decorator(
-    mode: Literal["queryable", "mutatable"],
+    mode: Literal["queryable", "mutatable", "script"],
     _func: Optional[T] = None,
     *,
     dependencies: Optional[List[str]] = None,
@@ -134,8 +312,17 @@ def _build_decorator(
     dependencies = dependencies or []
     env_vars = env_vars or {}
 
+    model = BaseMetadata(
+        dependencies=dependencies,
+        env_vars=env_vars,
+        runtime_typechecking=runtime_typechecking,
+    )
+
     def decorator(func: T) -> T:
         sig = inspect.signature(func)
+        args_pydantic_type = None  # The type of the positional argument, if provided.
+        ret_pydantic_type = None  # The type of the return value.
+
         # Allow at most one positional argument (if provided, must be a subclass of BaseModel)
         positional = [
             p
@@ -159,8 +346,10 @@ def _build_decorator(
                     f"{mode.capitalize()} function '{func.__name__}' positional argument '{p.name}' must be annotated with a subclass of pydantic.BaseModel."
                 )
 
+            args_pydantic_type = p.annotation
+
         # Check return annotation
-        if sig.return_annotation is inspect.Signature.empty:
+        if sig.return_annotation is inspect.Signature.empty and mode != "script":
             raise TypeError(
                 f"{mode.capitalize()} function '{func.__name__}' must have a return type annotation."
             )
@@ -172,20 +361,31 @@ def _build_decorator(
                 inner = get_args(ret_ann)[0]
                 if isinstance(inner, type) and issubclass(inner, BaseModel):
                     expected = "model_list"
+                    ret_pydantic_type = inner
                 else:
                     raise TypeError(
                         f"Queryable '{func.__name__}' returns a list but its inner type is not a subclass of BaseModel."
                     )
             elif isinstance(ret_ann, type) and issubclass(ret_ann, BaseModel):
                 expected = "model"
+                ret_pydantic_type = ret_ann
+            elif isinstance(ret_ann, type) and issubclass(ret_ann, FrameSchema):
+                expected = "frame_schema"
+                ret_pydantic_type = None
             else:
                 expected = "frame"
-        else:  # mutatable
+                ret_pydantic_type = None
+        elif mode == "mutatable":  # mutatable
             if not (isinstance(ret_ann, type) and issubclass(ret_ann, BaseModel)):
                 raise TypeError(
                     f"Mutatable function '{func.__name__}' must have a return type annotation that is a subclass of BaseModel."
                 )
             expected = "model"
+            ret_pydantic_type = ret_ann
+
+        func.__qs_args_pydantic_type__ = args_pydantic_type
+        func.__qs_ret_pydantic_type__ = ret_pydantic_type
+        func.__qs_mode__ = mode
 
         # The actual wrapper
         def _validate_args(bound):
@@ -209,16 +409,27 @@ def _build_decorator(
 
         def _validate_result(result):
             if mode == "queryable":
-                if expected == "frame":
+                if expected == "frame" or expected == "frame_schema":
                     frame_obj = result[0] if isinstance(result, tuple) else result
+
                     if not (
                         (pd is not None and isinstance(frame_obj, pd.DataFrame))
                         or (pl is not None and isinstance(frame_obj, pl.DataFrame))
                         or (pa is not None and isinstance(frame_obj, pa.Table))
+                        or (isinstance(frame_obj, FrameSchema))
                     ):
                         raise TypeError(
-                            f"Queryable '{func.__name__}' expected to return a valid frame-like object."
+                            f"Queryable '{func.__name__}' expected to return a valid frame-like object or frame schema."
                         )
+
+                    if (
+                        not isinstance(frame_obj, FrameSchema)
+                        and expected == "frame_schema"
+                    ):
+                        return frame_obj  # TODO Convert into frame schema, getting the annotation off the `ret_anna`
+                    else:
+                        return frame_obj
+
                 elif expected == "model" and not isinstance(result, BaseModel):
                     raise TypeError(
                         f"Queryable '{func.__name__}' expected to return a BaseModel instance."
@@ -230,11 +441,15 @@ def _build_decorator(
                     raise TypeError(
                         f"Queryable '{func.__name__}' expected to return a list of BaseModel instances."
                     )
-            else:  # mutatable
+            elif mode == "mutatable":  # mutatable
                 if not isinstance(result, ret_ann):
                     raise TypeError(
                         f"Mutatable '{func.__name__}' returned {type(result)} but must return {ret_ann}."
                     )
+
+            return result
+
+        attach_metadata(func, namespace=None, data=model)
 
         if asyncio.iscoroutinefunction(func):
 
@@ -248,7 +463,11 @@ def _build_decorator(
                     _validate_args(bound)
                 result = await func(*bound.args, **bound.kwargs)
                 if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
-                    _validate_result(result)
+                    validated = _validate_result(result)
+                    if isinstance(result, tuple):
+                        return validated, result[1]
+                    else:
+                        return validated
                 return result
 
             return async_wrapper  # type: ignore
@@ -264,7 +483,11 @@ def _build_decorator(
                     _validate_args(bound)
                 result = func(*bound.args, **bound.kwargs)
                 if runtime_typechecking and GLOBAL_RUNTIME_TYPECHECKING:
-                    _validate_result(result)
+                    validated = _validate_result(result)
+                    if isinstance(result, tuple):
+                        return validated, result[1]
+                    else:
+                        return validated
                 return result
 
             return sync_wrapper  # type: ignore
@@ -318,143 +541,38 @@ def mutatable(
     )
 
 
-# -----------------------------------------------------------------------------
-# Script Decorator and Helpers (unchanged)
-# -----------------------------------------------------------------------------
-script_logger_var: contextvars.ContextVar[logging.Logger] = contextvars.ContextVar(
-    "script_logger", default=logging.getLogger("default")
-)
-script_args_var: contextvars.ContextVar[Optional[BaseModel]] = contextvars.ContextVar(
-    "script_args", default=None
-)
-
 TScript = TypeVar("TScript", bound=Callable[..., Any])
 
 
 def script(
-    arg_parser_model: Optional[Type[BaseModel]] = None,
+    _func: Optional[TScript] = None,
+    *,
+    dependencies: Optional[List[str]] = None,
+    env_vars: Optional[Dict[str, Type]] = None,
+    runtime_typechecking: bool = True,
 ) -> Callable[[TScript], TScript]:
     def decorator(func: TScript) -> TScript:
-        sig = inspect.signature(func)
+        # Wrap using the same _build_decorator as queryable
+        wrapped = _build_decorator(
+            "script",
+            func,
+            dependencies=dependencies,
+            env_vars=env_vars,
+            runtime_typechecking=runtime_typechecking,
+        )
 
-        def setup_context() -> Tuple[
-            logging.Logger, contextvars.Token, Optional[contextvars.Token]
-        ]:
-            logger = logging.getLogger(func.__name__)
-            token_logger = script_logger_var.set(logger)
-            token_args = None
-            if arg_parser_model is not None:
-                cli_args = parse_cli_args(arg_parser_model)
-                token_args = script_args_var.set(cli_args)
-            return logger, token_logger, token_args
+        wrapped_with_logger = with_context_item(
+            "logger",
+            value=logging.getLogger(func.__name__),
+        )(wrapped)
 
-        def reset_context(
-            token_logger: contextvars.Token, token_args: Optional[contextvars.Token]
-        ) -> None:
-            script_logger_var.reset(token_logger)
-            if token_args is not None:
-                script_args_var.reset(token_args)
+        return wrapped_with_logger
 
-        def inject_kwargs(kwargs: Dict[str, Any], logger: logging.Logger) -> None:
-            if "logger" in sig.parameters and "logger" not in kwargs:
-                kwargs["logger"] = logger
-            if (
-                arg_parser_model is not None
-                and "cli_args" in sig.parameters
-                and "cli_args" not in kwargs
-            ):
-                kwargs["cli_args"] = script_args_var.get()
-
-        if asyncio.iscoroutinefunction(func):
-
-            @functools.wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                logger, token_logger, token_args = setup_context()
-                try:
-                    inject_kwargs(kwargs, logger)
-                    result = await func(*args, **kwargs)
-                finally:
-                    reset_context(token_logger, token_args)
-                return result
-
-            return async_wrapper  # type: ignore
-        else:
-
-            @functools.wraps(func)
-            def sync_wrapper(*args, **kwargs):
-                logger, token_logger, token_args = setup_context()
-                try:
-                    inject_kwargs(kwargs, logger)
-                    result = func(*args, **kwargs)
-                finally:
-                    reset_context(token_logger, token_args)
-                return result
-
-            return sync_wrapper  # type: ignore
-
-    return decorator
-
-
-def parse_cli_args(arg_parser_model: Type[BaseModel]) -> BaseModel:
-    parser = argparse.ArgumentParser(description=arg_parser_model.__doc__ or "")
-    type_hints = get_type_hints(arg_parser_model)
-    for field_name, field in arg_parser_model.model_fields.items():
-        parser_kwargs = {
-            "type": type_hints[field_name],
-            "required": field.is_required(),
-            "default": field.default,
-            "help": field.description,
-        }
-        extra = field.json_schema_extra.get("argparse", {})
-        if "cli_required" in extra:
-            parser_kwargs["required"] = extra.pop("cli_required")
-        parser_kwargs.update(extra)
-        parser.add_argument(f"--{field_name}", **parser_kwargs)
-    args = parser.parse_args()
-    return arg_parser_model(**vars(args))
-
-
-def get_script_logger() -> logging.Logger:
-    return script_logger_var.get()
-
-
-def get_script_args() -> Optional[BaseModel]:
-    return script_args_var.get()
+    return decorator(_func) if _func is not None else decorator
 
 
 __all__ = [
     "queryable",
     "mutatable",
     "script",
-    "get_script_logger",
-    "get_script_args",
 ]
-
-# -----------------------------------------------------------------------------
-# Example Usage
-# -----------------------------------------------------------------------------
-if __name__ == "__main__":
-    from pydantic import Field
-
-    class CLIArgs(BaseModel):
-        """Command-line arguments for the script."""
-
-        input_file: str = Field(
-            "default.txt",
-            description="Path to the input file",
-            argparse={"cli_required": True, "metavar": "FILE"},
-        )
-        mode: str = Field(
-            ...,
-            description="Operation mode",
-            argparse={"choices": ["fast", "slow"], "metavar": "MODE"},
-        )
-
-    @script(arg_parser_model=CLIArgs)
-    def main(cli_args: CLIArgs, logger: logging.Logger):
-        logger.info(
-            f"Running in {cli_args.mode} mode using file: {cli_args.input_file}"
-        )
-        print(f"CLI args: {cli_args}")
-
-    main()
